@@ -239,6 +239,9 @@ return fmt.Errorf("login failed to due invalid credentials for user %s", usernam
 //Adding context to an existing error
 return fmt.Errorf("errors connecting to postgres: %s", err.Error())
 
+//Alternative: wrap an existing error
+return fmt.Errorf("errors connecting to postgres: %w", err)
+
 //Bad capitalized error message
 return fmt.Errorf("Try again")
 ```
@@ -272,22 +275,29 @@ var (
 Handling package defined errors as the API consumer:
 ```go
 func TestPreDefinedErrorHandling(t *testing.T) {
-	err := error_handling.ReturnPredefinedError()
+	err := errorhandling.ReturnPredefinedError()
 	//You can use a switch
 	switch err {
-	case error_handling.ConnectionError:
+	case errorhandling.ConnectionError:
 		assert.Equal(t, "connection failed", err.Error())
 	default:
 		t.Fatal("unexpected error")
 	}
 
 	//Or a simple comparison
-	if err == error_handling.ConnectionError {
+	if err == errorhandling.ConnectionError {
+		assert.Equal(t, "connection failed", err.Error())
+	} else {
+		t.Fatal("unexpected error")
+	}
+	//Best: using errors.Is(), which examines the entire error chain in case of wrapped errors
+	if errors.Is(err, errorhandling.ConnectionError) {
 		assert.Equal(t, "connection failed", err.Error())
 	} else {
 		t.Fatal("unexpected error")
 	}
 }
+
 ```
 Use of this approach ONLY if you can get away with non-parameterized errors on a function that can return errors which require
 individual handling.
@@ -326,17 +336,52 @@ func TestCustomErrorHandling(t *testing.T) {
 
 	switch err.(type) {
 	case errorhandling.CustomError:
-		customError := err.(errorhandling.CustomError) //This typecast is considered fine as we did the type check already
-        
-		//Inspect and handle the error
+		customError := err.(errorhandling.CustomError)
+
 		assert.Equal(t, 22, customError.Status)
 		assert.Equal(t, "Just cause", customError.Reason)
 	default:
 		t.Fatal("unexpected error")
 	}
+	//Preferred: using errors.As(...) which examines the entire error chain to find wrapped errorhandling.CustomError
+	var ce errorhandling.CustomError
+	if errors.As(err, &ce) {
+		assert.Equal(t, 22, ce.Status)
+		assert.Equal(t, "Just cause", ce.Reason)
+	} else {
+		t.Fatal("unexpected error")
+	}
 }
+
 ```
 ONLY use custom error types if you have a function that returns errors which require individual handling. This should be used rarely!
+
+#### Wrapping errors
+Introduced in [golang 1.13](https://go.dev/blog/go1.13-errors), errors can be wrapped into other errors. This can be used to preserve more than just the
+error text when context is added to an error. The newly added`errors.Is()` and `errors.As()` functions can be used to check package defined or custom error types. These functions
+consider the entire error chain. In the following example, the `errorhandling.CustomError` is wrapped into a generic error using the format directive `%w`.
+`errors.As(..)` locates the `errorhandling.CustomError` in the error chain and deserializes it into the provided value for processing:
+
+```go
+func TestCustomErrorChainHandling(t *testing.T) {
+	err := errorhandling.ReturnCustomError()
+	//Wrapping the original errorhandling.CustomError into another error using format directive '%w'
+	wrapErr := fmt.Errorf("I caught an error %w", err)
+	
+	var ce errorhandling.CustomError
+	//errors.As() will find the errorhandling.CustomError in the chain
+	if errors.As(wrapErr, &ce) {
+		assert.Equal(t, 22, ce.Status)
+		assert.Equal(t, "Just cause", ce.Reason)
+	} else {
+		t.Fatal("unexpected error")
+	}
+}
+```
+:bulb: If you want your custom error types to support wrapping, you need to implement `func Unwrap() error`
+
+You should use error wrapping only when adding context to a complex error that carries more information than just the error text. You want to preserve the original information
+for your package user to process.
 
 ### Logging
 
